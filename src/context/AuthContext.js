@@ -29,33 +29,50 @@ export const AuthProvider = ({ children }) => {
 
   // Cambiamos la firma para aceptar email y password, no el evento 'e'
   const loginUser = async (email, password) => {
-    setError(null); // Limpiamos errores previos
+    setError(null);
     try {
-      // 1. Apuntamos al endpoint de login correcto de tu backend.
       const response = await api.post('/user/login', {
         email: email,
         password: password,
       });
 
-      // 2. Adaptamos el código a la estructura de respuesta de tu backend.
-      // La data útil viene dentro de `response.data.data`.
-      const responseData = response.data.data;
+      // Aseguramos la lectura tanto si viene en response.data.data o directo en response.data
+      const rawData = response.data?.data || response.data;
+      const accessToken = rawData?.access_token || rawData?.access;
 
-      // 3. Creamos el objeto 'authTokens' con la estructura que espera el resto de la app.
-      // Tu backend devuelve 'access_token', lo renombramos a 'access' para consistencia.
+      if (!accessToken) {
+        throw new Error("No se recibió 'access_token' en la respuesta del backend.");
+      }
+
       const tokens = { 
-        ...responseData, 
-        access: responseData.access_token,
-        refresh: responseData.refresh_token, // Guardamos el nuevo refresh_token
+        ...rawData, 
+        access: accessToken,
+        refresh: rawData?.refresh_token || null,
       };
+
+      // Decodificamos de forma segura
+      let decodedUser = null;
+      try {
+        decodedUser = jwtDecode(accessToken);
+      } catch (decodeErr) {
+        console.warn("No se pudo decodificar el token como JWT:", decodeErr);
+        // Si no es un JWT estándar, extraemos los datos básicos del backend
+        decodedUser = { email: rawData.email, avatar: rawData.avatar_user };
+      }
+
       setAuthTokens(tokens);
-      setUser(jwtDecode(tokens.access));
+      setUser(decodedUser);
       localStorage.setItem('authTokens', JSON.stringify(tokens));
-      navigate('/dashboard'); // Redirigimos al dashboard tras un login exitoso
+      navigate('/dashboard');
     } catch (error) {
       console.error('Login failed:', error);
-      // Establecemos un mensaje de error que se mostrará en la página de Login
-      setError('Usuario o contraseña incorrectos. Por favor, inténtalo de nuevo.');
+      // Si el backend respondió con un error HTTP 401/400 es credencial errónea,
+      // sino es un error de código o red
+      if (error.response && error.response.status === 401) {
+        setError('Usuario o contraseña incorrectos.');
+      } else {
+        setError(`Error al iniciar sesión: ${error.message}`);
+      }
     }
   };
 
